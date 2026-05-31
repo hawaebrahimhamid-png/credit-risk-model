@@ -216,3 +216,15 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+# Project data
+data/
+
+# MLflow tracking
+mlruns/
+
+# Model files
+*.pkl
+*.joblib
+
+# Large datasets
+*.csv
