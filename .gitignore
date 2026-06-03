@@ -228,3 +228,7 @@ mlruns/
 
 # Large datasets
 *.csv
+mlflow.db
+mlruns/
+__pycache__/
+*.pkl
