@@ -1,24 +1,25 @@
 import os
-
 import pandas as pd
 
 from sklearn.pipeline import Pipeline
 from sklearn.compose import ColumnTransformer
-
 from sklearn.impute import SimpleImputer
-from sklearn.preprocessing import OneHotEncoder
-from sklearn.preprocessing import StandardScaler
+from sklearn.preprocessing import OneHotEncoder, StandardScaler, MinMaxScaler
+from sklearn.cluster import KMeans
 
 
+# =========================
+# LOAD DATA
+# =========================
 def load_data(filepath):
-    """Load raw transaction data."""
     return pd.read_csv(filepath)
 
 
+# =========================
+# AGGREGATE FEATURES
+# =========================
 def create_aggregate_features(df):
-    """Create customer-level aggregate features."""
-
-    agg_df = (
+    return (
         df.groupby("CustomerId")
         .agg(
             TotalTransactionAmount=("Amount", "sum"),
@@ -29,66 +30,63 @@ def create_aggregate_features(df):
         .reset_index()
     )
 
-    return agg_df
 
-
+# =========================
+# TIME FEATURES
+# =========================
 def extract_time_features(df):
-    """Extract time-based features."""
+    df["TransactionStartTime"] = pd.to_datetime(df["TransactionStartTime"])
 
-    df["TransactionStartTime"] = pd.to_datetime(
-        df["TransactionStartTime"]
-    )
-
-    df["TransactionHour"] = (
-        df["TransactionStartTime"].dt.hour
-    )
-    df["TransactionDay"] = (
-        df["TransactionStartTime"].dt.day
-    )
-    df["TransactionMonth"] = (
-        df["TransactionStartTime"].dt.month
-    )
-    df["TransactionYear"] = (
-        df["TransactionStartTime"].dt.year
-    )
+    df["TransactionHour"] = df["TransactionStartTime"].dt.hour
+    df["TransactionDay"] = df["TransactionStartTime"].dt.day
+    df["TransactionMonth"] = df["TransactionStartTime"].dt.month
+    df["TransactionYear"] = df["TransactionStartTime"].dt.year
 
     return df
 
 
+# =========================
+# RFM FEATURES
+# =========================
+def create_rfm_features(df):
+    snapshot_date = pd.to_datetime(
+        df["TransactionStartTime"]
+    ).max() + pd.Timedelta(days=1)
+
+    return (
+        df.groupby("CustomerId")
+        .agg(
+            Recency=(
+                "TransactionStartTime",
+                lambda x: (
+                    snapshot_date
+                    - pd.to_datetime(x).max()
+                ).days,
+            ),
+            Frequency=("TransactionId", "count"),
+            Monetary=("Amount", "sum"),
+        )
+        .reset_index()
+    )
+
+
+# =========================
+# MAIN PIPELINE
+# =========================
 if __name__ == "__main__":
 
     # Load data
     df = load_data("data/raw/data.csv")
     print(df.head())
 
-    # Aggregate features
+    # =========================
+    # TASK 3: FEATURE ENGINEERING
+    # =========================
     agg_df = create_aggregate_features(df)
-    print(agg_df.head())
+    df = df.merge(agg_df, on="CustomerId", how="left")
 
-    # Time features
     df = extract_time_features(df)
 
-    print(
-        df[
-            [
-                "TransactionHour",
-                "TransactionDay",
-                "TransactionMonth",
-                "TransactionYear",
-            ]
-        ].head()
-    )
-
-    # Merge aggregate features
-    df = df.merge(
-        agg_df,
-        on="CustomerId",
-        how="left",
-    )
-
-    print(df.shape)
-
-    # Feature lists
     categorical_features = [
         "CurrencyCode",
         "ProviderId",
@@ -112,95 +110,86 @@ if __name__ == "__main__":
         "StdTransactionAmount",
     ]
 
-    print("Feature lists created successfully")
-
-    # Numerical preprocessing
     numeric_transformer = Pipeline(
         steps=[
-            (
-                "imputer",
-                SimpleImputer(strategy="median"),
-            ),
-            (
-                "scaler",
-                StandardScaler(),
-            ),
+            ("imputer", SimpleImputer(strategy="median")),
+            ("scaler", StandardScaler()),
         ]
     )
 
-    # Categorical preprocessing
     categorical_transformer = Pipeline(
         steps=[
-            (
-                "imputer",
-                SimpleImputer(
-                    strategy="most_frequent"
-                ),
-            ),
-            (
-                "encoder",
-                OneHotEncoder(
-                    handle_unknown="ignore"
-                ),
-            ),
+            ("imputer", SimpleImputer(strategy="most_frequent")),
+            ("encoder", OneHotEncoder(handle_unknown="ignore")),
         ]
     )
 
-    print("Transformers created successfully")
-
-    # Column transformer
     preprocessor = ColumnTransformer(
         transformers=[
-            (
-                "num",
-                numeric_transformer,
-                numerical_features,
-            ),
-            (
-                "cat",
-                categorical_transformer,
-                categorical_features,
-            ),
+            ("num", numeric_transformer, numerical_features),
+            ("cat", categorical_transformer, categorical_features),
         ]
     )
 
-    print("Preprocessor created successfully")
+    pipeline = Pipeline(steps=[("preprocessor", preprocessor)])
 
-    # Full pipeline
-    pipeline = Pipeline(
-        steps=[
-            (
-                "preprocessor",
-                preprocessor,
-            )
-        ]
-    )
-
-    print("Pipeline created successfully")
-
-    # Transform data
     X = pipeline.fit_transform(df)
 
+    print("Final transformed shape:", X.shape)
+
+    os.makedirs("data/processed", exist_ok=True)
+
+    processed_df = pd.DataFrame(X.toarray() if hasattr(X, "toarray") else X)
+
+    processed_df.to_csv("data/processed/processed_data.csv", index=False)
+
+    print("Processed data saved")
+
+    # =========================
+    # TASK 4: RFM + KMEANS
+    # =========================
+
+    rfm_df = create_rfm_features(df)
+
+    # Step 1: Scale RFM
+    scaler = MinMaxScaler()
+    rfm_scaled = scaler.fit_transform(
+        rfm_df[["Recency", "Frequency", "Monetary"]]
+    )
+
+    # Step 2: KMeans clustering
+    kmeans = KMeans(n_clusters=3, random_state=42)
+    rfm_df["Cluster"] = kmeans.fit_predict(rfm_scaled)
+
+    print("\nCluster counts:")
+    print(rfm_df["Cluster"].value_counts())
+
+    # Step 3: Cluster analysis
+    print("\nCluster Means:")
     print(
-        "Final transformed shape:",
-        X.shape,
+        rfm_df.groupby("Cluster")[["Recency", "Frequency", "Monetary"]].mean()
     )
 
-    # Save processed data
-    os.makedirs(
-        "data/processed",
-        exist_ok=True,
+    # Step 4: Assign HIGH RISK cluster (TEMP RULE: adjust after inspection)
+    high_risk_cluster = rfm_df.groupby("Cluster")["Recency"].mean().idxmax()
+
+    rfm_df["is_high_risk"] = (rfm_df["Cluster"] == high_risk_cluster).astype(
+        int
     )
 
-    processed_df = pd.DataFrame(
-        X.toarray()
-        if hasattr(X, "toarray")
-        else X
+    print("\nHigh risk distribution:")
+    print(rfm_df["is_high_risk"].value_counts())
+
+    # Step 5: Merge back
+    df = df.merge(
+        rfm_df[["CustomerId", "is_high_risk"]],
+        on="CustomerId",
+        how="left",
     )
 
-    processed_df.to_csv(
-        "data/processed/processed_data.csv",
-        index=False,
-    )
+    print("\nFinal dataset shape with target:", df.shape)
 
-    print("Processed data saved successfully")
+    # Step 6: Save final dataset
+    df.to_csv("data/processed/processed_with_target.csv", index=False)
+
+    print("Task 4 completed successfully")
