@@ -3,15 +3,9 @@ import mlflow
 import mlflow.sklearn
 import pandas as pd
 
-from sklearn.model_selection import (
-    train_test_split,
-    GridSearchCV
-)
-
+from sklearn.model_selection import train_test_split
 from sklearn.linear_model import LogisticRegression
-
 from sklearn.ensemble import RandomForestClassifier
-
 from sklearn.metrics import (
     accuracy_score,
     precision_score,
@@ -24,10 +18,24 @@ print("🔥 train.py is running")
 
 df = pd.read_csv("data/processed/processed_with_target.csv")
 
-X = df.drop(columns=["is_high_risk"])
+FEATURES = [
+    "CountryCode",
+    "Amount",
+    "Value",
+    "PricingStrategy",
+    "FraudResult",
+    "TotalTransactionAmount",
+    "AverageTransactionAmount",
+    "TransactionCount",
+    "StdTransactionAmount",
+    "TransactionHour",
+    "TransactionDay",
+    "TransactionMonth",
+    "TransactionYear"
+]
 
-# Keep only numeric columns
-X = X.select_dtypes(include=["number"])
+X = df[FEATURES]
+X = X.fillna(0)
 
 # Fill missing values
 X = X.fillna(0)
@@ -53,7 +61,8 @@ lr.fit(X_train, y_train)
 
 
 rf = RandomForestClassifier(
-    random_state=42
+    random_state=42,
+    class_weight="balanced"
 )
 
 rf.fit(X_train, y_train)
@@ -119,23 +128,3 @@ with mlflow.start_run(run_name="RandomForest"):
 joblib.dump(best_model, "best_model.pkl")
 
 print("Best model saved as best_model.pkl")
-
-
-param_grid = {
-    "n_estimators": [100, 200],
-    "max_depth": [5, 10]
-}
-
-grid = GridSearchCV(
-    RandomForestClassifier(random_state=42),
-    param_grid,
-    cv=3,
-    scoring="roc_auc",
-    n_jobs=-1
-)
-
-grid.fit(X_train, y_train)
-
-best_model = grid.best_estimator_
-
-print("Best Parameters:", grid.best_params_)
